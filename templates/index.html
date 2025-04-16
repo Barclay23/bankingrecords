@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>Generuj JPK_WB</title>
+</head>
+<body>
+    <h1>Formularz przesyłania danych JPK_WB</h1>
+    <form action="/upload" method="post" enctype="multipart/form-data">
+        <label for="header">Plik nagłówka (CSV):</label><br>
+        <input type="file" name="header" id="header" accept=".csv" required><br><br>
+
+        <label for="positions">Pliki pozycji (CSV, wiele plików dozwolone):</label><br>
+        <input type="file" name="positions" id="positions" accept=".csv" multiple required><br><br>
+
+        <label for="start_date">Data początkowa:</label><br>
+        <input type="date" name="start_date" id="start_date" required><br><br>
+
+        <label for="end_date">Data końcowa:</label><br>
+        <input type="date" name="end_date" id="end_date" required><br><br>
+
+        <button type="submit">Generuj JPK_WB</button>
+    </form>
+</body>
+</html>
