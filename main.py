@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify, send_file, render_template
 import pandas as pd
+import numpy as np
 import os
 from datetime import datetime, date
 import xml.etree.ElementTree as ET
@@ -28,23 +29,62 @@ def validate_saldo(transactions):
         saldo = float(tx['SaldoKonta'])
     return True
 
-def generate_jpk_xml(header, transactions, start_date, end_date):
+def generate_jpk_xml(header, transactions, start_date, end_date, start_saldo, end_saldo, minus_sum, plus_sum):
     root = ET.Element('JPK')
     header_elem = ET.SubElement(root, 'Naglowek')
-    ET.SubElement(header_elem, 'KodFormularza').text = 'JPK_WB'
+    ET.SubElement(header_elem, 'KodFormularza').text = 'JPK_WB(1) 1-0'
     ET.SubElement(header_elem, 'WariantFormularza').text = '1'
     ET.SubElement(header_elem, 'CelZlozenia').text = 'Złożenie JPK_WB po raz pierwszy'
     ET.SubElement(header_elem, 'DataWytworzeniaJPK').text = str(date.today())
     ET.SubElement(header_elem, 'DataOd').text = str(start_date)
     ET.SubElement(header_elem, 'DataDo').text = str(end_date)
-    for key, value in header.items():
-        ET.SubElement(header_elem, key).text = str(value)
+    ET.SubElement(header_elem, 'DomyslnyKodWaluty').text = str(header['KodWaluty'])
+    ET.SubElement(header_elem, 'KodUrzedu').text = str(header['KodUrzędu'])
+    # for key, value in header.items():
+    #     ET.SubElement(header_elem, key).text = str(value)
+    podmi_elem = ET.SubElement(root, 'Podmiot1')
 
-    trans_elem = ET.SubElement(root, 'Transakcje')
+    ident_elem = ET.SubElement(podmi_elem, 'IdentyfikatorPodmiotu')
+
+    ET.SubElement(ident_elem, 'NIP').text = str(header['NIP'])
+    ET.SubElement(ident_elem, 'PelnaNazwa').text = str(header['NazwaFirmy'])
+    ET.SubElement(ident_elem, 'REGON').text = str(header['REGON'])
+
+    adres_elem = ET.SubElement(podmi_elem, 'AdresPodmiotu')
+
+    ET.SubElement(adres_elem, 'KodKraju').text = str(header['KodKraju'])
+    ET.SubElement(adres_elem, 'Wojewodztwo').text = str(header['Województwo'])
+    ET.SubElement(adres_elem, 'Powiat').text = str(header['Powiat'])
+    ET.SubElement(adres_elem, 'Gmina').text = str(header['Gmina'])
+    ET.SubElement(adres_elem, 'Ulica').text = str(header['Ulica'])
+    ET.SubElement(adres_elem, 'NrDomu').text = str(header['NrDomu'])
+    ET.SubElement(adres_elem, 'NrLokalu').text = str(header['NrLokalu'])
+    ET.SubElement(adres_elem, 'Miejscowosc').text = str(header['Miejscowość'])
+    ET.SubElement(adres_elem, 'KodPocztowy').text = str(header['KodPocztowy'])
+    ET.SubElement(adres_elem, 'Poczta').text = str(header['Poczta'])
+
+    ET.SubElement(root, 'NumerRachunku').text = str(header['NumerRachunku'])
+
+    salda_elem = ET.SubElement(root, 'Salda')
+    ET.SubElement(salda_elem, 'SaldoPoczatkowe').text = str(start_saldo)
+    ET.SubElement(salda_elem, 'SaldoKoncowe').text = str(end_saldo)
+
+    num = 1
+
+    wyciag_elem = ET.SubElement(root, 'WyciagWierszy')
     for tx in transactions:
-        tx_elem = ET.SubElement(trans_elem, 'Transakcja')
-        for key, value in tx.items():
-            ET.SubElement(tx_elem, key).text = str(value)
+        ET.SubElement(wyciag_elem, 'NumerWiersza').text = str(num)
+        ET.SubElement(wyciag_elem, 'DataOperacji').text = str(tx['Data'])
+        ET.SubElement(wyciag_elem, 'NazwaPodmiotu').text = str(tx['Kontrahent'])
+        ET.SubElement(wyciag_elem, 'OpisOperacji').text = str(tx['Tytul'])
+        ET.SubElement(wyciag_elem, 'KwotaOperacji').text = str(tx['Kwota'])
+        ET.SubElement(wyciag_elem, 'SaldoOperacji').text = str(tx['SaldoKonta'])
+        num=num+1
+
+    ctrl_elem = ET.SubElement(root, 'WyciagCtrl')
+    ET.SubElement(ctrl_elem, 'LiczbaWierszy').text = str(num)
+    ET.SubElement(ctrl_elem, 'SumaObciazen').text = str(minus_sum)
+    ET.SubElement(ctrl_elem, 'SumaUznan').text = str(plus_sum)
 
     xml_bytes = BytesIO()
     tree = ET.ElementTree(root)
@@ -79,10 +119,35 @@ def upload_files():
     header = header_df.iloc[0].to_dict()
     header_account = header['NumerRachunku']
 
+    min_date = end_date
+    max_date = start_date
+
+    start_saldo=0
+    end_saldo=0
+
+
+    minus_sum = 0
+    plus_sum = 0
+
+
     all_transactions = []
     for f in position_files:
         df = pd.read_csv(f, encoding='utf-8')
         df = df[df['Data'].apply(lambda d: start_date <= datetime.strptime(d, '%Y-%m-%d').date() <= end_date)]
+        min_data_w_df = datetime.strptime(df['Data'].min(), '%Y-%m-%d').date()
+        if min_date>= min_data_w_df:
+            min_date = min_data_w_df
+            start_saldo = df.loc[df['Data'] == df['Data'].min(), 'SaldoKonta'].iloc[0]
+
+        max_data_w_df = datetime.strptime(df['Data'].max(), '%Y-%m-%d').date()
+        if max_date<=max_data_w_df:
+            max_date = max_data_w_df
+            end_saldo = df.loc[df['Data'] == df['Data'].max(), 'SaldoKonta'].iloc[0]
+
+        minus_sum += df.loc[df['Kwota'] < 0, 'Kwota'].abs().sum()
+
+        plus_sum += df.loc[df['Kwota'] > 0, 'Kwota'].abs().sum()
+
         all_transactions.extend(df.to_dict(orient='records'))
 
     if not validate_account(header_account, all_transactions):
@@ -91,7 +156,7 @@ def upload_files():
     if not validate_saldo(all_transactions):
         return jsonify({'error': 'Invalid saldo sequence in transactions.'}), 400
 
-    xml_output = generate_jpk_xml(header, all_transactions, start_date, end_date)
+    xml_output = generate_jpk_xml(header, all_transactions, start_date, end_date, start_saldo, end_saldo,minus_sum, plus_sum)
     return send_file(xml_output, mimetype='application/xml', as_attachment=True, download_name='JPK_WB.xml')
 
 if __name__ == '__main__':
