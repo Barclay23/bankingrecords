@@ -25,33 +25,45 @@ def validate_saldo(transactions):
     saldo = None
     for tx in transactions:
         if saldo is not None and float(tx['SaldoKonta']) != saldo + float(tx['Kwota']):
+            #print(str(tx['SaldoKonta'])+" "+str(saldo)+" "+str(tx['Kwota']))
             return False
         saldo = float(tx['SaldoKonta'])
     return True
 
+from xml.etree import ElementTree as ET
+from datetime import date
+from io import BytesIO
+
 def generate_jpk_xml(header, transactions, start_date, end_date, start_saldo, end_saldo, minus_sum, plus_sum):
-    root = ET.Element('JPK')
+    NSMAP = {
+        'xmlns': 'http://jpk.mf.gov.pl/wzor/2021/11/29/11011/',
+        'xmlns:etd': 'http://crd.gov.pl/wzor/2020/05/08/9393/',
+        'xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance'
+    }
+
+    # Główny element z przestrzeniami nazw
+    root = ET.Element('JPK', NSMAP)
+
+    # === Nagłówek ===
     header_elem = ET.SubElement(root, 'Naglowek')
     ET.SubElement(header_elem, 'KodFormularza').text = 'JPK_WB(1) 1-0'
     ET.SubElement(header_elem, 'WariantFormularza').text = '1'
-    ET.SubElement(header_elem, 'CelZlozenia').text = 'Złożenie JPK_WB po raz pierwszy'
+    ET.SubElement(header_elem, 'CelZlozenia').text = '1'
     ET.SubElement(header_elem, 'DataWytworzeniaJPK').text = str(date.today())
     ET.SubElement(header_elem, 'DataOd').text = str(start_date)
     ET.SubElement(header_elem, 'DataDo').text = str(end_date)
     ET.SubElement(header_elem, 'DomyslnyKodWaluty').text = str(header['KodWaluty'])
     ET.SubElement(header_elem, 'KodUrzedu').text = str(header['KodUrzędu'])
-    # for key, value in header.items():
-    #     ET.SubElement(header_elem, key).text = str(value)
-    podmi_elem = ET.SubElement(root, 'Podmiot1')
 
-    ident_elem = ET.SubElement(podmi_elem, 'IdentyfikatorPodmiotu')
+    # === Podmiot ===
+    podmiot_elem = ET.SubElement(root, 'Podmiot1')
 
+    ident_elem = ET.SubElement(podmiot_elem, 'IdentyfikatorPodmiotu')
     ET.SubElement(ident_elem, 'NIP').text = str(header['NIP'])
     ET.SubElement(ident_elem, 'PelnaNazwa').text = str(header['NazwaFirmy'])
     ET.SubElement(ident_elem, 'REGON').text = str(header['REGON'])
 
-    adres_elem = ET.SubElement(podmi_elem, 'AdresPodmiotu')
-
+    adres_elem = ET.SubElement(podmiot_elem, 'AdresPodmiotu')
     ET.SubElement(adres_elem, 'KodKraju').text = str(header['KodKraju'])
     ET.SubElement(adres_elem, 'Wojewodztwo').text = str(header['Województwo'])
     ET.SubElement(adres_elem, 'Powiat').text = str(header['Powiat'])
@@ -63,34 +75,37 @@ def generate_jpk_xml(header, transactions, start_date, end_date, start_saldo, en
     ET.SubElement(adres_elem, 'KodPocztowy').text = str(header['KodPocztowy'])
     ET.SubElement(adres_elem, 'Poczta').text = str(header['Poczta'])
 
+    # === Numer Rachunku ===
     ET.SubElement(root, 'NumerRachunku').text = str(header['NumerRachunku'])
 
+    # === Salda ===
     salda_elem = ET.SubElement(root, 'Salda')
     ET.SubElement(salda_elem, 'SaldoPoczatkowe').text = str(start_saldo)
     ET.SubElement(salda_elem, 'SaldoKoncowe').text = str(end_saldo)
 
-    num = 1
+    # === Wyciąg - wiersze ===
+    for idx, tx in enumerate(transactions, start=1):
+        wiersz = ET.SubElement(root, 'WyciagWiersz', attrib={'typ': 'G'})
+        ET.SubElement(wiersz, 'NumerWiersza').text = str(idx)
+        ET.SubElement(wiersz, 'DataOperacji').text = str(tx['Data'])
+        ET.SubElement(wiersz, 'NazwaPodmiotu').text = str(tx.get('Kontrahent', ''))
+        ET.SubElement(wiersz, 'OpisOperacji').text = str(tx.get('Tytul', ''))
+        ET.SubElement(wiersz, 'KwotaOperacji').text = str(tx['Kwota'])
+        ET.SubElement(wiersz, 'SaldoOperacji').text = str(tx['SaldoKonta'])
 
-    wyciag_elem = ET.SubElement(root, 'WyciagWierszy')
-    for tx in transactions:
-        ET.SubElement(wyciag_elem, 'NumerWiersza').text = str(num)
-        ET.SubElement(wyciag_elem, 'DataOperacji').text = str(tx['Data'])
-        ET.SubElement(wyciag_elem, 'NazwaPodmiotu').text = str(tx['Kontrahent'])
-        ET.SubElement(wyciag_elem, 'OpisOperacji').text = str(tx['Tytul'])
-        ET.SubElement(wyciag_elem, 'KwotaOperacji').text = str(tx['Kwota'])
-        ET.SubElement(wyciag_elem, 'SaldoOperacji').text = str(tx['SaldoKonta'])
-        num=num+1
-
+    # === Kontrola ===
     ctrl_elem = ET.SubElement(root, 'WyciagCtrl')
-    ET.SubElement(ctrl_elem, 'LiczbaWierszy').text = str(num)
+    ET.SubElement(ctrl_elem, 'LiczbaWierszy').text = str(len(transactions))
     ET.SubElement(ctrl_elem, 'SumaObciazen').text = str(minus_sum)
     ET.SubElement(ctrl_elem, 'SumaUznan').text = str(plus_sum)
 
+    # === Zapisz jako XML ===
     xml_bytes = BytesIO()
     tree = ET.ElementTree(root)
     tree.write(xml_bytes, encoding='utf-8', xml_declaration=True)
     xml_bytes.seek(0)
     return xml_bytes
+
 
 @app.route('/', methods = ["POST", "GET"])
 def home():
@@ -99,7 +114,7 @@ def home():
 @app.route('/upload', methods=['POST'])
 def upload_files():
     header_file = request.files.get('header')
-    position_files = request.files.getlist('positions')
+    position_files = request.files.getlist('positions[]')
     start_date_str = request.form.get('start_date')
     end_date_str = request.form.get('end_date')
 
